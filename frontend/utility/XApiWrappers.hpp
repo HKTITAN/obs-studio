@@ -37,6 +37,7 @@ class XApiWrappers : public XAuth {
 	bool pendingLowLatency = true;
 	int pendingChatOption = 2;
 	bool pendingNoTweet = false;
+	QString statusText;
 
 	bool Request(const QString &url, const char *method, const char *body, json11::Json &jsonOut, bool allowRefresh,
 		     long *statusOut, bool followRedirects);
@@ -53,6 +54,8 @@ public:
 	explicit XApiWrappers(const Def &d);
 
 	QString LastError() const { return lastError; }
+	QString StatusText() const { return statusText; }
+	void SetStatus(const QString &text) { statusText = text; }
 	QString IngestUrl() const { return ingestUrl; }
 	QString Region() const { return region; }
 	QString SourceId() const { return sourceId; }
@@ -68,6 +71,7 @@ public:
 	bool HasPendingPublish() const { return pendingPublish; }
 	bool PublishPendingBroadcast();
 	bool EndPublishedBroadcast();
+	void Persist();
 
 	virtual void OnStreamConfig() override;
 	virtual void SaveInternal() override;

@@ -14,6 +14,9 @@
 
 #include <qt-wrappers.hpp>
 
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPushButton>
 #include <QUuid>
 
 static const QUuid &CustomServerUUID()
@@ -460,8 +463,150 @@ void OBSBasicSettings::UpdateKeyLink()
 	} else {
 		ui->getStreamKeyButton->setTargetUrl(QUrl(streamKeyLink));
 		ui->getStreamKeyButton->show();
+		if (serviceName == "X") {
+			ui->getStreamKeyButton->setToolTip(QTStr("X.Settings.LiveStudioTip"));
+		} else if (serviceName == "Twitter (Legacy)") {
+			ui->getStreamKeyButton->setToolTip(QTStr("X.Settings.LegacyTip"));
+		}
 	}
 }
+
+#ifdef X_ENABLED
+static QString XStatusHtml(const QString &text)
+{
+	if (text.contains(QStringLiteral("<a "))) {
+		return text;
+	}
+	return text.toHtmlEscaped();
+}
+
+void OBSBasicSettings::EnsureXStreamControls()
+{
+	if (xGetStreamKeyButton) {
+		return;
+	}
+
+	xGetStreamKeyButton = new QPushButton(QTStr("X.Settings.GetStreamKey"), ui->streamKeyWidget);
+	auto *row = qobject_cast<QHBoxLayout *>(ui->streamKeyWidget->layout());
+	if (row) {
+		const int index = row->indexOf(ui->getStreamKeyButton);
+		row->insertWidget(index < 0 ? row->count() : index, xGetStreamKeyButton);
+	}
+	connect(xGetStreamKeyButton, &QPushButton::clicked, this, &OBSBasicSettings::XGetStreamKeyClicked);
+
+	xStatusLabel = new QLabel(this);
+	xStatusLabel->setWordWrap(true);
+	xStatusLabel->setTextFormat(Qt::RichText);
+	xStatusLabel->setOpenExternalLinks(true);
+	ui->destinationLayout->addRow(xStatusLabel);
+}
+
+void OBSBasicSettings::ApplyXIngestToForm(const QString &ingest, const QString &key)
+{
+	if (!ingest.isEmpty()) {
+		int index = ui->server->findData(ingest);
+		if (index < 0) {
+			const QString label = ingest.startsWith(QStringLiteral("rtmps://")) ? ingest
+											    : ingest + QStringLiteral(" (RTMP)");
+			ui->server->insertItem(0, label, ingest);
+			index = 0;
+		}
+		ui->server->setCurrentIndex(index);
+	}
+	if (!key.isEmpty()) {
+		ui->key->setText(key);
+	}
+}
+
+void OBSBasicSettings::UpdateXStreamControls()
+{
+	EnsureXStreamControls();
+
+	const bool isX = IsXService(ui->service->currentText().toStdString());
+	xGetStreamKeyButton->setVisible(isX);
+	xStatusLabel->setVisible(isX);
+	if (!isX) {
+		ui->connectAccount2->setText(QTStr("Basic.AutoConfig.StreamPage.ConnectAccount"));
+		ui->getStreamKeyButton->setText(QTStr("Basic.AutoConfig.StreamPage.GetStreamKey"));
+		return;
+	}
+
+	ui->streamKeyWidget->setVisible(true);
+	ui->streamKeyLabel->setVisible(true);
+	ui->useStreamKeyAdv->setVisible(false);
+	ui->connectAccount2->setVisible(true);
+	ui->connectAccount2->setText(QTStr("X.Settings.SignIn"));
+	ui->getStreamKeyButton->setText(QTStr("X.Settings.OpenLiveStudio"));
+
+	auto *xAuth = dynamic_cast<XApiWrappers *>(auth.get());
+	const bool connected = xAuth && IsXService(xAuth->service());
+	if (!connected) {
+		ui->connectAccount2->setVisible(true);
+		ui->disconnectAccount->setVisible(false);
+		xStatusLabel->setText(QTStr("X.Settings.Status.Disconnected"));
+		return;
+	}
+
+	ui->connectAccount2->setVisible(false);
+	ui->disconnectAccount->setVisible(true);
+	ui->connectedAccountLabel->setVisible(true);
+	ui->connectedAccountText->setVisible(true);
+	if (!xAuth->Username().isEmpty()) {
+		ui->connectedAccountText->setText(QTStr("X.Auth.Connected").arg(xAuth->Username()));
+	} else {
+		ui->connectedAccountText->setText(QTStr("X.Auth.SignedIn"));
+	}
+
+	if (!xAuth->IngestUrl().isEmpty()) {
+		ApplyXIngestToForm(xAuth->IngestUrl(), QString::fromStdString(xAuth->key()));
+	}
+
+	if (!xAuth->StatusText().isEmpty()) {
+		xStatusLabel->setText(XStatusHtml(xAuth->StatusText()));
+	} else if (!xAuth->key().empty()) {
+		xStatusLabel->setText(QTStr("X.Settings.Status.KeyReady").arg(xAuth->Region()));
+	} else {
+		xStatusLabel->setText(QTStr("X.Settings.Status.ConnectedNeedKey"));
+	}
+}
+
+void OBSBasicSettings::XGetStreamKeyClicked()
+{
+	if (!auth || !IsXService(auth->service())) {
+		on_connectAccount_clicked();
+	}
+	auto *xAuth = dynamic_cast<XApiWrappers *>(auth.get());
+	if (!xAuth) {
+		return;
+	}
+
+	xAuth->SetStatus(QTStr("X.Settings.Status.CreatingSource"));
+	xStatusLabel->setText(xAuth->StatusText());
+
+	bool ok = false;
+	QString error;
+	auto work = [&]() {
+		ok = xAuth->EnsureSource();
+		if (!ok) {
+			error = xAuth->LastError();
+		}
+	};
+	ExecThreadedWithoutBlocking(work, QTStr("X.Settings.Status.CreatingSource"),
+				    QTStr("X.Settings.Status.CreatingSource"));
+	if (!ok) {
+		xAuth->SetStatus(error.isEmpty() ? QTStr("X.Actions.Error.NeedSource") : error);
+		xStatusLabel->setText(XStatusHtml(xAuth->StatusText()));
+		return;
+	}
+
+	ApplyXIngestToForm(xAuth->IngestUrl(), QString::fromStdString(xAuth->key()));
+	const QString ready = QTStr("X.Settings.Status.KeyReady").arg(xAuth->Region());
+	xAuth->SetStatus(ready);
+	xStatusLabel->setText(ready);
+	stream1Changed = true;
+	EnableApplyButton(true);
+}
+#endif
 
 void OBSBasicSettings::LoadServices(bool showAll)
 {
@@ -591,6 +736,9 @@ void OBSBasicSettings::on_service_currentIndexChanged(int idx)
 	UpdateServerList();
 	UpdateKeyLink();
 	UpdateServiceRecommendations();
+#ifdef X_ENABLED
+	UpdateXStreamControls();
+#endif
 
 	UpdateVodTrackSetting();
 
@@ -859,20 +1007,16 @@ void OBSBasicSettings::OnOAuthStreamKeyConnected()
 				ui->connectedAccountText->setText(QTStr("X.Auth.SignedIn"));
 			}
 			if (xAuth && !xAuth->IngestUrl().isEmpty()) {
-				const QString ingest = xAuth->IngestUrl();
-				int ingestIndex = ui->server->findData(ingest);
-				if (ingestIndex == -1) {
-					ui->server->insertItem(0, ingest, ingest);
-					ingestIndex = 0;
-				}
-				ui->server->setCurrentIndex(ingestIndex);
-				ui->key->setText(QString::fromStdString(xAuth->key()));
+				ApplyXIngestToForm(xAuth->IngestUrl(), QString::fromStdString(xAuth->key()));
 			}
 		}
 #endif
 	}
 
 	ui->streamStackWidget->setCurrentIndex((int)Section::StreamKey);
+#ifdef X_ENABLED
+	UpdateXStreamControls();
+#endif
 }
 
 void OBSBasicSettings::OnAuthConnected()
@@ -894,6 +1038,13 @@ void OBSBasicSettings::on_connectAccount_clicked()
 {
 	std::string service = ui->service->currentText().toStdString();
 
+#ifdef X_ENABLED
+	if (IsXService(service)) {
+		EnsureXStreamControls();
+		xStatusLabel->setText(QTStr("X.Settings.Status.Connecting"));
+	}
+#endif
+
 	OAuth::DeleteCookies(service);
 
 	auth = OAuthStreamKey::Login(this, service);
@@ -910,6 +1061,11 @@ void OBSBasicSettings::on_connectAccount_clicked()
 
 		ui->useStreamKeyAdv->setVisible(false);
 	}
+#ifdef X_ENABLED
+	else if (IsXService(service) && xStatusLabel) {
+		xStatusLabel->setText(QTStr("X.Settings.Status.Disconnected"));
+	}
+#endif
 }
 
 #define DISCONNECT_COMFIRM_TITLE "Basic.AutoConfig.StreamPage.DisconnectAccount.Confirm.Title"
@@ -955,6 +1111,9 @@ void OBSBasicSettings::on_disconnectAccount_clicked()
 		main->GetYouTubeAppDock()->AccountDisconnected();
 		main->GetYouTubeAppDock()->Update();
 	}
+#endif
+#ifdef X_ENABLED
+	UpdateXStreamControls();
 #endif
 }
 

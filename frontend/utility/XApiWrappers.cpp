@@ -171,7 +171,11 @@ bool XApiWrappers::Request(const QString &url, const char *method, const char *b
 		if (message.isEmpty()) {
 			message = error.empty() ? QString::number(status) : QString::fromStdString(error);
 		}
-		lastError = QTStr("X.Actions.Error.Api").arg(message);
+		if (status == 401 || status == 403) {
+			lastError = QTStr("X.Settings.AccessDenied").arg(message.toHtmlEscaped());
+		} else {
+			lastError = QTStr("X.Actions.Error.Api").arg(message.toHtmlEscaped());
+		}
 		blog(LOG_WARNING, "X API %s failed (%ld)", method ? method : "GET", status);
 		return false;
 	}
@@ -306,6 +310,7 @@ bool XApiWrappers::EnsureSource()
 		if (GetSource(sourceId, existing) && existing.region == region && !PreferredIngest(existing).isEmpty()) {
 			RememberSource(existing);
 			ApplyIngestToService();
+			Persist();
 			return true;
 		}
 	}
@@ -316,6 +321,7 @@ bool XApiWrappers::EnsureSource()
 			if (source.region == region && !PreferredIngest(source).isEmpty()) {
 				RememberSource(source);
 				ApplyIngestToService();
+				Persist();
 				return true;
 			}
 		}
@@ -330,6 +336,7 @@ bool XApiWrappers::EnsureSource()
 	}
 	RememberSource(created);
 	ApplyIngestToService();
+	Persist();
 	return true;
 }
 
@@ -428,11 +435,14 @@ bool XApiWrappers::PublishPendingBroadcast()
 	if (!pendingPublish) {
 		return true;
 	}
+	SetStatus(QTStr("X.Settings.Status.Waiting"));
 	if (!WaitUntilStreamActive()) {
+		SetStatus(lastError);
 		return false;
 	}
 	QString created;
 	if (!CreateBroadcast(created)) {
+		SetStatus(lastError);
 		return false;
 	}
 	broadcastId = created;
@@ -448,10 +458,12 @@ bool XApiWrappers::PublishPendingBroadcast()
 	};
 	const std::string body = Json(payload).dump();
 	if (!SetBroadcastState(broadcastId, body.c_str())) {
+		SetStatus(lastError);
 		return false;
 	}
 	pendingPublish = false;
 	broadcastPublished = true;
+	SetStatus(QTStr("X.Settings.Status.Live"));
 	return true;
 }
 
@@ -461,10 +473,12 @@ bool XApiWrappers::EndPublishedBroadcast()
 		return true;
 	}
 	if (!SetBroadcastState(broadcastId, "{\"state\":\"END\"}")) {
+		SetStatus(lastError);
 		return false;
 	}
 	broadcastPublished = false;
 	broadcastId.clear();
+	SetStatus(QTStr("X.Settings.Status.Ended"));
 	return true;
 }
 
@@ -472,6 +486,15 @@ void XApiWrappers::OnStreamConfig()
 {
 	OAuthStreamKey::OnStreamConfig();
 	ApplyIngestToService();
+}
+
+void XApiWrappers::Persist()
+{
+	SaveInternal();
+	OBSBasic *main = OBSBasic::Get();
+	if (main) {
+		config_save_safe(main->Config(), "tmp", nullptr);
+	}
 }
 
 void XApiWrappers::SaveInternal()

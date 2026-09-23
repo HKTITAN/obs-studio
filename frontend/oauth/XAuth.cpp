@@ -327,7 +327,6 @@ std::shared_ptr<Auth> XAuth::Login(QWidget *owner, const std::string &)
 
 	auto finish = [&]() {
 		auth->FetchIdentity();
-		auth->EnsureSource();
 	};
 	ExecThreadedWithoutBlocking(finish, QTStr("Auth.LoadingChannel.Title"), QTStr("Auth.LoadingChannel.Text").arg("X"));
 

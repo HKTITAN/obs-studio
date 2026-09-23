@@ -464,6 +464,21 @@ void OBSBasic::StreamActionTriggered()
 
 		Auth *auth = GetAuth();
 
+		OBSDataAutoRelease xSettings = obs_service_get_settings(service);
+		const char *serviceName = obs_data_get_string(xSettings, "service");
+		const char *streamKey = obs_service_get_connect_info(service, OBS_SERVICE_CONNECT_INFO_STREAM_KEY);
+#ifdef X_ENABLED
+		if (serviceName && IsXService(serviceName) && !(streamKey && *streamKey)) {
+			OBSMessageBox::warning(this, QTStr("Basic.Settings.Stream.MissingSettingAlert"),
+					       QTStr("X.Settings.NeedKey"));
+			on_action_Settings_triggered();
+			return;
+		}
+#else
+		UNUSED_PARAMETER(serviceName);
+		UNUSED_PARAMETER(streamKey);
+#endif
+
 		auto action = (auth && auth->external()) ? StreamSettingsAction::ContinueStream
 							 : UIValidation::StreamSettingsConfirmation(this, service);
 		switch (action) {
