@@ -123,7 +123,7 @@ static size_t header_write(char *ptr, size_t size, size_t nmemb, vector<string> 
 
 bool GetRemoteFile(const char *url, std::string &str, std::string &error, long *responseCode, const char *contentType,
 		   std::string request_type, const char *postData, std::vector<std::string> extraHeaders,
-		   std::string *signature, int timeoutSec, bool fail_on_error, int postDataSize)
+		   std::string *signature, int timeoutSec, bool fail_on_error, int postDataSize, bool followRedirects)
 {
 	vector<string> header_in_list;
 	char error_in[CURL_ERROR_SIZE];
@@ -156,6 +156,10 @@ bool GetRemoteFile(const char *url, std::string &str, std::string &error, long *
 
 		curl_easy_setopt(curl.get(), CURLOPT_URL, url);
 		curl_easy_setopt(curl.get(), CURLOPT_ACCEPT_ENCODING, "");
+		if (followRedirects) {
+			curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
+			curl_easy_setopt(curl.get(), CURLOPT_MAXREDIRS, 5L);
+		}
 		curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, header);
 		curl_easy_setopt(curl.get(), CURLOPT_ERRORBUFFER, error_in);
 		if (fail_on_error) {

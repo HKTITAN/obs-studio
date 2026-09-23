@@ -2,11 +2,13 @@
 
 #include <OBSApp.hpp>
 #include <utility/RemoteTextThread.hpp>
+#include <widgets/OBSBasic.hpp>
 
 #include <qt-wrappers.hpp>
 
-#include <QRegularExpression>
+#include <QThread>
 #include <QUrl>
+#include <QVector>
 
 #include <json11.hpp>
 
@@ -17,29 +19,12 @@ using namespace json11;
 namespace {
 
 constexpr const char *XApiHost = "https://api.x.com";
+constexpr int kStreamActiveAttempts = 20;
 
 QString JsonAsString(const Json &value)
 {
 	if (value.is_string()) {
 		return QString::fromStdString(value.string_value());
-	}
-	if (value.is_number()) {
-		return QString::number(static_cast<qlonglong>(value.number_value()));
-	}
-	return {};
-}
-
-QString BroadcastPathId(const Json &item)
-{
-	// Path :id is broadcast_id (or id). scheduled_broadcast_id is the numeric
-	// scheduler id and is rejected by POST .../live.
-	static const QRegularExpression re(QStringLiteral("^[A-Za-z0-9]{1,13}$"));
-	const char *keys[] = {"broadcast_id", "id"};
-	for (const char *key : keys) {
-		const QString id = JsonAsString(item[key]);
-		if (re.match(id).hasMatch()) {
-			return id;
-		}
 	}
 	return {};
 }
@@ -76,45 +61,63 @@ QString ErrorText(const Json &json)
 	return {};
 }
 
-XBroadcast ParseBroadcast(const Json &item, bool scheduled)
+XStreamSource ParseSource(const Json &item)
 {
-	XBroadcast broadcast;
-	broadcast.id = BroadcastPathId(item);
-	broadcast.title = JsonAsString(item["title"]);
-	broadcast.sourceId = JsonAsString(item["source_id"]);
-	broadcast.state = JsonAsString(item["state"]);
-	broadcast.manualPublish = item["manual_publish"].bool_value();
-	broadcast.scheduled = scheduled;
-	return broadcast;
+	XStreamSource source;
+	const Json object = item["source"].is_object() ? item["source"] : item;
+	source.id = JsonAsString(object["id"]);
+	if (source.id.isEmpty()) {
+		source.id = JsonAsString(object["rtmp_stream_key"]);
+	}
+	source.name = JsonAsString(object["name"]);
+	source.region = JsonAsString(object["rtmp_region"]);
+	source.rtmpUrl = JsonAsString(object["rtmp_url"]);
+	source.rtmpsUrl = JsonAsString(object["rtmps_url"]);
+	source.streamKey = JsonAsString(object["rtmp_stream_key"]);
+	if (source.streamKey.isEmpty()) {
+		source.streamKey = source.id;
+	}
+	source.streamActive = object["is_stream_active"].bool_value();
+	return source;
 }
 
-void MergeBroadcast(QVector<XBroadcast> &out, const XBroadcast &incoming)
+void CollectSources(const Json &json, QVector<XStreamSource> &out)
 {
-	if (incoming.id.isEmpty()) {
+	if (json.is_array()) {
+		for (const Json &item : json.array_items()) {
+			XStreamSource source = ParseSource(item);
+			if (!source.id.isEmpty()) {
+				out.push_back(source);
+			}
+		}
 		return;
 	}
-	for (XBroadcast &existing : out) {
-		if (existing.id != incoming.id) {
+	if (json["source"].is_object()) {
+		XStreamSource source = ParseSource(json);
+		if (!source.id.isEmpty()) {
+			out.push_back(source);
+		}
+	}
+	const char *keys[] = {"sources", "data"};
+	for (const char *key : keys) {
+		if (!json[key].is_array()) {
 			continue;
 		}
-		if (existing.sourceId.isEmpty()) {
-			existing.sourceId = incoming.sourceId;
+		for (const Json &item : json[key].array_items()) {
+			XStreamSource source = ParseSource(item);
+			if (!source.id.isEmpty()) {
+				out.push_back(source);
+			}
 		}
-		if (incoming.scheduled) {
-			existing.scheduled = true;
-			existing.manualPublish = incoming.manualPublish;
-		}
-		if (XBroadcastIsLive(incoming.state)) {
-			existing.state = incoming.state;
-		} else if (existing.state.isEmpty()) {
-			existing.state = incoming.state;
-		}
-		if (existing.title.isEmpty()) {
-			existing.title = incoming.title;
-		}
-		return;
 	}
-	out.push_back(incoming);
+}
+
+QString PreferredIngest(const XStreamSource &source)
+{
+	if (!source.rtmpsUrl.isEmpty()) {
+		return source.rtmpsUrl;
+	}
+	return source.rtmpUrl;
 }
 
 } // namespace
@@ -122,7 +125,7 @@ void MergeBroadcast(QVector<XBroadcast> &out, const XBroadcast &incoming)
 XApiWrappers::XApiWrappers(const Def &d) : XAuth(d) {}
 
 bool XApiWrappers::Request(const QString &url, const char *method, const char *body, Json &jsonOut, bool allowRefresh,
-			   long *statusOut)
+			   long *statusOut, bool followRedirects)
 {
 	lastError.clear();
 	if ((token.empty() || TokenExpired()) && allowRefresh) {
@@ -141,7 +144,7 @@ bool XApiWrappers::Request(const QString &url, const char *method, const char *b
 	long status = 0;
 	const std::vector<std::string> headers = {"Authorization: Bearer " + token, "Accept: application/json"};
 	const bool success = GetRemoteFile(QT_TO_UTF8(url), output, error, &status, "application/json", method, body,
-					   headers, nullptr, 20, false);
+					   headers, nullptr, 20, false, 0, followRedirects);
 	if (statusOut) {
 		*statusOut = status;
 	}
@@ -151,7 +154,7 @@ bool XApiWrappers::Request(const QString &url, const char *method, const char *b
 			lastError = QTStr("X.Actions.Error.Api").arg(QStringLiteral("unauthorized"));
 			return false;
 		}
-		return Request(url, method, body, jsonOut, false, statusOut);
+		return Request(url, method, body, jsonOut, false, statusOut, followRedirects);
 	}
 
 	if (!output.empty()) {
@@ -175,16 +178,23 @@ bool XApiWrappers::Request(const QString &url, const char *method, const char *b
 	return true;
 }
 
-void XApiWrappers::FetchUsername()
+bool XApiWrappers::FetchIdentity()
 {
-	// The broadcasts schema has no account name. /2/users/me is the
-	// user-context identity call and needs the users.read scope.
+	// Livestream paths require the numeric id from the token. /2/users/me is
+	// the documented way to read it. users.read is not a livestream scope;
+	// it exists so this call can return that id.
 	Json json;
 	const QString url = QStringLiteral("%1/2/users/me?user.fields=id,name,username").arg(XApiHost);
-	if (!Request(url, "GET", nullptr, json, true, nullptr)) {
-		return;
+	if (!Request(url, "GET", nullptr, json, true, nullptr, false)) {
+		return false;
 	}
 	const Json data = json["data"].is_object() ? json["data"] : json;
+	const QString id = JsonAsString(data["id"]);
+	if (id.isEmpty()) {
+		lastError = QTStr("X.Actions.Error.Api").arg(QStringLiteral("missing user id"));
+		return false;
+	}
+	userId = id;
 	QString name = JsonAsString(data["username"]);
 	if (name.isEmpty()) {
 		name = JsonAsString(data["name"]);
@@ -192,139 +202,306 @@ void XApiWrappers::FetchUsername()
 	if (!name.isEmpty()) {
 		username = name;
 	}
+	return true;
 }
 
-bool XApiWrappers::ListBroadcasts(QVector<XBroadcast> &out)
+bool XApiWrappers::RecommendedRegion(QString &regionOut)
 {
-	out.clear();
-	bool scheduledOk = true;
-	QString page;
-	for (int i = 0; i < 10 && scheduledOk; i++) {
-		QString url = QStringLiteral("%1/2/broadcasts/scheduled?max_results=100").arg(XApiHost);
-		if (!page.isEmpty()) {
-			url += QStringLiteral("&pagination_token=") + QString::fromUtf8(QUrl::toPercentEncoding(page));
-		}
-		Json json;
-		if (!Request(url, "GET", nullptr, json, true, nullptr)) {
-			scheduledOk = false;
-			break;
-		}
-		for (const Json &item : json["data"].array_items()) {
-			MergeBroadcast(out, ParseBroadcast(item, true));
-		}
-		page = JsonAsString(json["meta"]["next_token"]);
-		if (page.isEmpty()) {
-			break;
-		}
-	}
-
-	bool liveOk = true;
-	page.clear();
-	for (int i = 0; i < 10 && liveOk; i++) {
-		QString url = QStringLiteral(
-			"%1/2/broadcasts?max_results=100&broadcast.fields=broadcast_id,id,title,state,source_id,scheduled_start_ms,scheduled_end_ms")
-				      .arg(XApiHost);
-		if (!page.isEmpty()) {
-			url += QStringLiteral("&pagination_token=") + QString::fromUtf8(QUrl::toPercentEncoding(page));
-		}
-		Json json;
-		if (!Request(url, "GET", nullptr, json, true, nullptr)) {
-			liveOk = false;
-			break;
-		}
-		for (const Json &item : json["data"].array_items()) {
-			MergeBroadcast(out, ParseBroadcast(item, false));
-		}
-		page = JsonAsString(json["meta"]["next_token"]);
-		if (page.isEmpty()) {
-			break;
-		}
-	}
-	return scheduledOk || liveOk;
-}
-
-void XApiWrappers::PrefillKeyFromBroadcasts()
-{
-	QVector<XBroadcast> items;
-	if (!ListBroadcasts(items)) {
-		return;
-	}
-	QString fallback;
-	for (const XBroadcast &item : items) {
-		if (item.sourceId.isEmpty()) {
-			continue;
-		}
-		if (XBroadcastIsLive(item.state)) {
-			key_ = item.sourceId.toStdString();
-			return;
-		}
-		if (fallback.isEmpty()) {
-			fallback = item.sourceId;
-		}
-	}
-	if (!fallback.isEmpty()) {
-		key_ = fallback.toStdString();
-	}
-}
-
-bool XApiWrappers::CreateScheduled(const QString &title, const QString &description, const QString &sourceId,
-				   qint64 startMs, qint64 endMs, XBroadcast &created)
-{
-	Json::object payload = {
-		{"source_id", sourceId.toStdString()},
-		{"scheduled_start_ms", std::to_string(startMs)},
-		{"scheduled_end_ms", std::to_string(endMs)},
-		{"title", title.toStdString()},
-		{"manual_publish", true},
-	};
-	if (!description.isEmpty()) {
-		payload.emplace("description", description.toStdString());
-	}
-	const std::string body = Json(payload).dump();
 	Json json;
-	const QString url = QStringLiteral("%1/2/broadcasts/scheduled").arg(XApiHost);
-	if (!Request(url, "POST", body.c_str(), json, true, nullptr)) {
+	long status = 0;
+	const QString url = QStringLiteral("%1/2/region").arg(XApiHost);
+	if (!Request(url, "GET", nullptr, json, true, &status, true)) {
 		return false;
 	}
-	const Json data = json["data"].is_object() ? json["data"] : json;
-	created = ParseBroadcast(data, true);
-	created.manualPublish = true;
-	created.scheduled = true;
-	if (created.sourceId.isEmpty()) {
-		created.sourceId = sourceId;
+	regionOut = JsonAsString(json["region"]);
+	if (regionOut.isEmpty()) {
+		lastError = QTStr("X.Actions.Error.Api").arg(QStringLiteral("missing region"));
+		return false;
 	}
-	if (created.id.isEmpty()) {
+	return true;
+}
+
+bool XApiWrappers::ListSources(QVector<XStreamSource> &out)
+{
+	out.clear();
+	if (userId.isEmpty() && !FetchIdentity()) {
+		return false;
+	}
+	Json json;
+	const QString url = QStringLiteral("%1/2/users/%2/sources").arg(XApiHost, userId);
+	if (!Request(url, "GET", nullptr, json, true, nullptr, false)) {
+		return false;
+	}
+	CollectSources(json, out);
+	if (out.isEmpty() && json["data"].is_object()) {
+		CollectSources(json["data"], out);
+	}
+	return true;
+}
+
+bool XApiWrappers::GetSource(const QString &id, XStreamSource &out)
+{
+	if (userId.isEmpty() && !FetchIdentity()) {
+		return false;
+	}
+	Json json;
+	const QString url = QStringLiteral("%1/2/users/%2/sources/%3").arg(XApiHost, userId, id);
+	if (!Request(url, "GET", nullptr, json, true, nullptr, false)) {
+		return false;
+	}
+	out = ParseSource(json);
+	if (out.id.isEmpty()) {
+		lastError = QTStr("X.Actions.Error.Api").arg(QStringLiteral("missing source"));
+		return false;
+	}
+	return true;
+}
+
+bool XApiWrappers::CreateSource(const QString &name, const QString &regionName, XStreamSource &created)
+{
+	if (userId.isEmpty() && !FetchIdentity()) {
+		return false;
+	}
+	const Json::object payload = {{"name", name.toStdString()}, {"region", regionName.toStdString()}};
+	const std::string body = Json(payload).dump();
+	Json json;
+	const QString url = QStringLiteral("%1/2/users/%2/sources").arg(XApiHost, userId);
+	if (!Request(url, "POST", body.c_str(), json, true, nullptr, false)) {
+		return false;
+	}
+	created = ParseSource(json);
+	if (created.streamKey.isEmpty() || PreferredIngest(created).isEmpty()) {
+		lastError = QTStr("X.Actions.Error.Api").arg(QStringLiteral("source missing ingest"));
+		return false;
+	}
+	return true;
+}
+
+void XApiWrappers::RememberSource(const XStreamSource &source)
+{
+	sourceId = source.id;
+	if (!source.region.isEmpty()) {
+		region = source.region;
+	}
+	ingestUrl = PreferredIngest(source);
+	if (!source.streamKey.isEmpty()) {
+		key_ = source.streamKey.toStdString();
+	}
+}
+
+bool XApiWrappers::EnsureSource()
+{
+	if (userId.isEmpty() && !FetchIdentity()) {
+		return false;
+	}
+
+	QString recommended;
+	if (!RecommendedRegion(recommended)) {
+		return false;
+	}
+	region = recommended;
+
+	if (!sourceId.isEmpty()) {
+		XStreamSource existing;
+		if (GetSource(sourceId, existing) && existing.region == region && !PreferredIngest(existing).isEmpty()) {
+			RememberSource(existing);
+			ApplyIngestToService();
+			return true;
+		}
+	}
+
+	QVector<XStreamSource> sources;
+	if (ListSources(sources)) {
+		for (const XStreamSource &source : sources) {
+			if (source.region == region && !PreferredIngest(source).isEmpty()) {
+				RememberSource(source);
+				ApplyIngestToService();
+				return true;
+			}
+		}
+	}
+
+	XStreamSource created;
+	if (!CreateSource(QStringLiteral("OBS Studio"), region, created)) {
+		return false;
+	}
+	if (created.region.isEmpty()) {
+		created.region = region;
+	}
+	RememberSource(created);
+	ApplyIngestToService();
+	return true;
+}
+
+void XApiWrappers::ApplyIngestToService()
+{
+	if (ingestUrl.isEmpty() || key_.empty()) {
+		return;
+	}
+	OBSBasic *main = OBSBasic::Get();
+	if (!main) {
+		return;
+	}
+	obs_service_t *service = main->GetService();
+	if (!service) {
+		return;
+	}
+	OBSDataAutoRelease settings = obs_service_get_settings(service);
+	obs_data_set_string(settings, "server", ingestUrl.toUtf8().constData());
+	obs_data_set_string(settings, "key", key_.c_str());
+	if (ingestUrl.startsWith(QStringLiteral("rtmps://"))) {
+		obs_data_set_string(settings, "protocol", "RTMPS");
+	}
+	obs_service_update(service, settings);
+}
+
+bool XApiWrappers::WaitUntilStreamActive()
+{
+	if (sourceId.isEmpty()) {
+		lastError = QTStr("X.Actions.Error.NeedSource");
+		return false;
+	}
+	for (int attempt = 0; attempt < kStreamActiveAttempts; attempt++) {
+		XStreamSource source;
+		if (GetSource(sourceId, source) && source.streamActive) {
+			RememberSource(source);
+			return true;
+		}
+		if (attempt + 1 < kStreamActiveAttempts) {
+			QThread::sleep(1);
+		}
+	}
+	lastError = QTStr("X.Actions.Error.IngestInactive");
+	return false;
+}
+
+bool XApiWrappers::CreateBroadcast(QString &createdId)
+{
+	if (userId.isEmpty() && !FetchIdentity()) {
+		return false;
+	}
+	const Json::object payload = {
+		{"source_id", sourceId.toStdString()},
+		{"region", region.toStdString()},
+		{"is_low_latency", pendingLowLatency},
+	};
+	const std::string body = Json(payload).dump();
+	Json json;
+	long status = 0;
+	const QString url = QStringLiteral("%1/2/users/%2/broadcasts").arg(XApiHost, userId);
+	if (!Request(url, "POST", body.c_str(), json, true, &status, false)) {
+		return false;
+	}
+	const Json broadcast = json["broadcast"].is_object() ? json["broadcast"] : json["data"];
+	createdId = JsonAsString(broadcast["broadcast_id"]);
+	if (createdId.isEmpty()) {
+		createdId = JsonAsString(broadcast["id"]);
+	}
+	if (createdId.isEmpty()) {
 		lastError = QTStr("X.Actions.Error.Api").arg(QStringLiteral("missing broadcast id"));
 		return false;
 	}
 	return true;
 }
 
-bool XApiWrappers::GoLive(const QString &broadcastId)
+bool XApiWrappers::SetBroadcastState(const QString &id, const char *body)
 {
-	static const QRegularExpression re(QStringLiteral("^[A-Za-z0-9]{1,13}$"));
-	if (!re.match(broadcastId).hasMatch()) {
-		lastError = QTStr("X.Actions.Error.Api").arg(QStringLiteral("invalid broadcast id"));
+	if (userId.isEmpty() && !FetchIdentity()) {
 		return false;
 	}
-	long status = 0;
 	Json json;
-	const QString url = QStringLiteral("%1/2/broadcasts/scheduled/%2/live").arg(XApiHost, broadcastId);
-	const bool ok = Request(url, "POST", "{}", json, true, &status);
-	if (status == 409) {
-		return true;
-	}
-	return ok;
+	const QString url = QStringLiteral("%1/2/users/%2/broadcasts/%3/state").arg(XApiHost, userId, id);
+	return Request(url, "PUT", body, json, true, nullptr, false);
+}
+
+void XApiWrappers::SetPendingPublish(const QString &title, bool lowLatency, int chatOption, bool noTweet)
+{
+	pendingTitle = title;
+	pendingLowLatency = lowLatency;
+	pendingChatOption = chatOption;
+	pendingNoTweet = noTweet;
+	pendingPublish = true;
 }
 
 bool XApiWrappers::PublishPendingBroadcast()
 {
-	if (pendingGoLiveId.isEmpty()) {
+	if (!pendingPublish) {
 		return true;
 	}
-	if (!GoLive(pendingGoLiveId)) {
+	if (!WaitUntilStreamActive()) {
 		return false;
 	}
-	pendingGoLiveId.clear();
+	QString created;
+	if (!CreateBroadcast(created)) {
+		return false;
+	}
+	broadcastId = created;
+	QString title = pendingTitle.trimmed();
+	if (title.isEmpty()) {
+		title = QStringLiteral("OBS Studio");
+	}
+	const Json::object payload = {
+		{"state", "PUBLISH"},
+		{"title", title.toStdString()},
+		{"should_not_tweet", pendingNoTweet},
+		{"chat_option", pendingChatOption},
+	};
+	const std::string body = Json(payload).dump();
+	if (!SetBroadcastState(broadcastId, body.c_str())) {
+		return false;
+	}
+	pendingPublish = false;
+	broadcastPublished = true;
+	return true;
+}
+
+bool XApiWrappers::EndPublishedBroadcast()
+{
+	if (!broadcastPublished || broadcastId.isEmpty()) {
+		return true;
+	}
+	if (!SetBroadcastState(broadcastId, "{\"state\":\"END\"}")) {
+		return false;
+	}
+	broadcastPublished = false;
+	broadcastId.clear();
+	return true;
+}
+
+void XApiWrappers::OnStreamConfig()
+{
+	OAuthStreamKey::OnStreamConfig();
+	ApplyIngestToService();
+}
+
+void XApiWrappers::SaveInternal()
+{
+	XAuth::SaveInternal();
+	OBSBasic *main = OBSBasic::Get();
+	config_set_string(main->Config(), service(), "UserId", QT_TO_UTF8(userId));
+	config_set_string(main->Config(), service(), "SourceId", QT_TO_UTF8(sourceId));
+	config_set_string(main->Config(), service(), "Region", QT_TO_UTF8(region));
+	config_set_string(main->Config(), service(), "IngestUrl", QT_TO_UTF8(ingestUrl));
+	config_set_string(main->Config(), service(), "StreamKey", key_.c_str());
+}
+
+bool XApiWrappers::LoadInternal()
+{
+	if (!XAuth::LoadInternal()) {
+		return false;
+	}
+	OBSBasic *main = OBSBasic::Get();
+	auto read = [&](const char *name) {
+		const char *value = config_get_string(main->Config(), service(), name);
+		return value ? QString::fromUtf8(value) : QString();
+	};
+	userId = read("UserId");
+	sourceId = read("SourceId");
+	region = read("Region");
+	ingestUrl = read("IngestUrl");
+	const QString key = read("StreamKey");
+	if (!key.isEmpty()) {
+		key_ = key.toStdString();
+	}
 	return true;
 }

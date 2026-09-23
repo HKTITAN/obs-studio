@@ -23,7 +23,7 @@
 
 #define X_AUTH_URL "https://api.x.com/2/oauth2/authorize"
 #define X_TOKEN_URL "https://api.x.com/2/oauth2/token"
-#define X_SCOPE_VERSION 1
+#define X_SCOPE_VERSION 2
 #define X_STATE_LENGTH 32
 #define X_VERIFIER_LENGTH 64
 
@@ -268,6 +268,7 @@ std::shared_ptr<Auth> XAuth::Login(QWidget *owner, const std::string &)
 	query.addQueryItem("response_type", "code");
 	query.addQueryItem("client_id", QString::fromStdString(clientId));
 	query.addQueryItem("redirect_uri", redirectUri);
+	// users.read resolves GET /2/users/me. The Livestream path :user_id must be that id.
 	query.addQueryItem("scope", "broadcast.read broadcast.write users.read offline.access");
 	query.addQueryItem("state", state);
 	query.addQueryItem("code_challenge", CodeChallenge(verifier));
@@ -325,8 +326,8 @@ std::shared_ptr<Auth> XAuth::Login(QWidget *owner, const std::string &)
 	}
 
 	auto finish = [&]() {
-		auth->FetchUsername();
-		auth->PrefillKeyFromBroadcasts();
+		auth->FetchIdentity();
+		auth->EnsureSource();
 	};
 	ExecThreadedWithoutBlocking(finish, QTStr("Auth.LoadingChannel.Title"), QTStr("Auth.LoadingChannel.Text").arg("X"));
 

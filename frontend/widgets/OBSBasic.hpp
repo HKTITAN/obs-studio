@@ -1683,7 +1683,7 @@ private:
 				   bool autostart, bool autostop, bool startNow);
 #endif
 #ifdef X_ENABLED
-	void XBroadcastDialogOk(const std::string &broadcastId, const std::string &sourceId);
+	void XBroadcastDialogOk();
 #endif
 
 	void BroadcastButtonClicked();

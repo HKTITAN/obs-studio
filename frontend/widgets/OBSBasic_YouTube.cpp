@@ -203,13 +203,13 @@ void OBSBasic::SetBroadcastFlowEnabled(bool enabled)
 }
 
 #ifdef X_ENABLED
-void OBSBasic::XBroadcastDialogOk(const std::string &broadcastId, const std::string &sourceId)
+void OBSBasic::XBroadcastDialogOk()
 {
-	obs_service_t *service_obj = GetService();
-	OBSDataAutoRelease settings = obs_service_get_settings(service_obj);
-	obs_data_set_string(settings, "key", sourceId.c_str());
-	obs_data_set_string(settings, "broadcast_id", broadcastId.c_str());
-	obs_service_update(service_obj, settings);
+	Auth *const auth = GetAuth();
+	auto *xAuth = dynamic_cast<XApiWrappers *>(auth);
+	if (xAuth) {
+		xAuth->ApplyIngestToService();
+	}
 
 	autoStartBroadcast = true;
 	autoStopBroadcast = true;

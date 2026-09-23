@@ -14,13 +14,13 @@ class XAuth : public OAuthStreamKey {
 	bool ExchangeCode(const QString &code, const QString &redirectUri, const QString &verifier);
 	QString GenerateState() const;
 
-	virtual bool RetryLogin() override;
-	virtual void SaveInternal() override;
-	virtual bool LoadInternal() override;
-
 protected:
 	QString username;
 	bool RefreshToken();
+
+	virtual bool RetryLogin() override;
+	virtual void SaveInternal() override;
+	virtual bool LoadInternal() override;
 
 public:
 	explicit XAuth(const Def &d);

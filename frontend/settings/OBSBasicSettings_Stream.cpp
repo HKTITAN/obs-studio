@@ -858,6 +858,16 @@ void OBSBasicSettings::OnOAuthStreamKeyConnected()
 			} else {
 				ui->connectedAccountText->setText(QTStr("X.Auth.SignedIn"));
 			}
+			if (xAuth && !xAuth->IngestUrl().isEmpty()) {
+				const QString ingest = xAuth->IngestUrl();
+				int ingestIndex = ui->server->findData(ingest);
+				if (ingestIndex == -1) {
+					ui->server->insertItem(0, ingest, ingest);
+					ingestIndex = 0;
+				}
+				ui->server->setCurrentIndex(ingestIndex);
+				ui->key->setText(QString::fromStdString(xAuth->key()));
+			}
 		}
 #endif
 	}

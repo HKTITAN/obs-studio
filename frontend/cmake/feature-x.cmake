@@ -1,7 +1,11 @@
-# X Broadcasts API (OAuth 2.0 user context).
+# X Livestream API (OAuth 2.0 user context).
 #
 # The maintainer supplies an X app client id and secret. Do not commit them.
-# Required scopes: broadcast.read, broadcast.write, users.read, offline.access.
+# The app must be enabled for the Livestream API (Enterprise). Request access:
+#   https://docs.x.com/forms/livestream-api-access
+# Scopes: broadcast.read, broadcast.write, offline.access, plus users.read so
+# GET /2/users/me can supply the numeric :user_id required on source and
+# broadcast paths.
 # Register this exact redirect URI on the app:
 #   http://127.0.0.1:42813/callback
 #

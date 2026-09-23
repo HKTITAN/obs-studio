@@ -270,7 +270,7 @@ void OBSBasic::StreamingStart()
 #ifdef X_ENABLED
 	if (auth && IsXService(auth->service())) {
 		auto *xAuth = dynamic_cast<XApiWrappers *>(auth.get());
-		if (xAuth && xAuth->HasPendingGoLive()) {
+		if (xAuth && xAuth->HasPendingPublish()) {
 			bool published = false;
 			QString detail;
 			auto publish = [&]() {
@@ -389,6 +389,19 @@ void OBSBasic::StreamingStop(int code, QString last_error)
 #ifdef YOUTUBE_ENABLED
 	if (YouTubeAppDock::IsYTServiceSelected()) {
 		youtubeAppDock->IngestionStopped();
+	}
+#endif
+#ifdef X_ENABLED
+	if (auth && IsXService(auth->service())) {
+		auto *xAuth = dynamic_cast<XApiWrappers *>(auth.get());
+		if (xAuth && !xAuth->EndPublishedBroadcast()) {
+			QString detail = xAuth->LastError();
+			if (detail.isEmpty()) {
+				detail = QTStr("X.Actions.Error.Api").arg(QStringLiteral("end"));
+			}
+			OBSMessageBox::warning(this, QTStr("Output.BroadcastStopFailed"),
+					       QTStr("X.Actions.EndFailed").arg(detail), true);
+		}
 	}
 #endif
 

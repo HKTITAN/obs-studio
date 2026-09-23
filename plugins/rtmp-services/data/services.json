@@ -1188,6 +1188,54 @@
             ],
             "servers": [
                 {
+                    "name": "US West: California (RTMPS)",
+                    "url": "rtmps://ca.pscp.tv:443/x"
+                },
+                {
+                    "name": "US West: Oregon (RTMPS)",
+                    "url": "rtmps://or.pscp.tv:443/x"
+                },
+                {
+                    "name": "US East: Virginia (RTMPS)",
+                    "url": "rtmps://va.pscp.tv:443/x"
+                },
+                {
+                    "name": "South America: Brazil (RTMPS)",
+                    "url": "rtmps://br.pscp.tv:443/x"
+                },
+                {
+                    "name": "EU West: France (RTMPS)",
+                    "url": "rtmps://fr.pscp.tv:443/x"
+                },
+                {
+                    "name": "EU West: Ireland (RTMPS)",
+                    "url": "rtmps://ie.pscp.tv:443/x"
+                },
+                {
+                    "name": "EU Central: Germany (RTMPS)",
+                    "url": "rtmps://de.pscp.tv:443/x"
+                },
+                {
+                    "name": "Asia/Pacific: Australia (RTMPS)",
+                    "url": "rtmps://au.pscp.tv:443/x"
+                },
+                {
+                    "name": "Asia/Pacific: India (RTMPS)",
+                    "url": "rtmps://in.pscp.tv:443/x"
+                },
+                {
+                    "name": "Asia/Pacific: Japan (RTMPS)",
+                    "url": "rtmps://jp.pscp.tv:443/x"
+                },
+                {
+                    "name": "Asia/Pacific: Korea (RTMPS)",
+                    "url": "rtmps://kr.pscp.tv:443/x"
+                },
+                {
+                    "name": "Asia/Pacific: Singapore (RTMPS)",
+                    "url": "rtmps://sg.pscp.tv:443/x"
+                },
+                {
                     "name": "US West: California",
                     "url": "rtmp://ca.pscp.tv:80/x"
                 },

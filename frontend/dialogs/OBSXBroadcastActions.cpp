@@ -6,15 +6,11 @@
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDateTime>
-#include <QDateTimeEdit>
 #include <QDesktopServices>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QMessageBox>
-#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -45,18 +41,9 @@ OBSXBroadcastActions::OBSXBroadcastActions(QWidget *parent, Auth *auth) : QDialo
 	}
 	valid = true;
 	setWindowTitle(QTStr("X.Actions.WindowTitle"));
-	resize(520, 640);
+	resize(480, 420);
 	BuildUi();
-
-	obs_service_t *service = OBSBasic::Get()->GetService();
-	OBSDataAutoRelease settings = obs_service_get_settings(service);
-	const char *savedKey = obs_data_get_string(settings, "key");
-	if (savedKey && *savedKey) {
-		streamKey->setText(QString::fromUtf8(savedKey));
-	} else if (!api->key().empty()) {
-		streamKey->setText(QString::fromStdString(api->key()));
-	}
-	ReloadBroadcasts();
+	ReloadSource();
 }
 
 void OBSXBroadcastActions::BuildUi()
@@ -67,152 +54,83 @@ void OBSXBroadcastActions::BuildUi()
 	hint->setWordWrap(true);
 	layout->addWidget(hint);
 
+	sourceLabel = new QLabel(this);
+	sourceLabel->setWordWrap(true);
+	sourceLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	layout->addWidget(sourceLabel);
+
 	titleEdit = new QLineEdit(this);
 	titleEdit->setPlaceholderText(QTStr("X.Actions.Title"));
 	layout->addWidget(titleEdit);
 
-	descriptionEdit = new QPlainTextEdit(this);
-	descriptionEdit->setPlaceholderText(QTStr("X.Actions.Description"));
-	descriptionEdit->setFixedHeight(72);
-	layout->addWidget(descriptionEdit);
+	lowLatency = new QCheckBox(QTStr("X.Actions.LowLatency"), this);
+	lowLatency->setChecked(true);
+	layout->addWidget(lowLatency);
 
-	layout->addWidget(new QLabel(QTStr("X.Actions.Existing"), this));
-	list = new QListWidget(this);
-	layout->addWidget(list, 1);
+	noTweet = new QCheckBox(QTStr("X.Actions.NoTweet"), this);
+	layout->addWidget(noTweet);
 
-	auto *listButtons = new QHBoxLayout();
-	auto *refresh = new QPushButton(QTStr("X.Actions.Refresh"), this);
-	auto *studio = new QPushButton(QTStr("X.Actions.OpenLiveStudio"), this);
-	listButtons->addWidget(refresh);
-	listButtons->addWidget(studio);
-	listButtons->addStretch(1);
-	layout->addLayout(listButtons);
-
-	layout->addWidget(new QLabel(QTStr("X.Actions.StreamKey"), this));
-	auto *keyRow = new QHBoxLayout();
-	streamKey = new QLineEdit(this);
-	streamKey->setEchoMode(QLineEdit::Password);
-	auto *showKey = new QPushButton(QTStr("Show"), this);
-	keyRow->addWidget(streamKey, 1);
-	keyRow->addWidget(showKey);
-	layout->addLayout(keyRow);
-
-	scheduleLater = new QCheckBox(QTStr("X.Actions.ScheduleLater"), this);
-	layout->addWidget(scheduleLater);
-
-	auto *whenRow = new QHBoxLayout();
-	whenEdit = new QDateTimeEdit(QDateTime::currentDateTime(), this);
-	whenEdit->setCalendarPopup(true);
-	whenEdit->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));
-	whenEdit->setEnabled(false);
-	duration = new QComboBox(this);
-	for (int hours : {1, 2, 4, 8}) {
-		duration->addItem(QTStr("X.Actions.Duration.Hours").arg(hours), hours);
-	}
-	duration->setCurrentIndex(2);
-	whenRow->addWidget(whenEdit, 1);
-	whenRow->addWidget(duration);
-	layout->addLayout(whenRow);
+	layout->addWidget(new QLabel(QTStr("X.Actions.ChatOption"), this));
+	chatOption = new QComboBox(this);
+	chatOption->addItem(QTStr("X.Actions.Chat.Everyone"), 2);
+	chatOption->addItem(QTStr("X.Actions.Chat.Verified"), 3);
+	chatOption->addItem(QTStr("X.Actions.Chat.Following"), 4);
+	chatOption->addItem(QTStr("X.Actions.Chat.Subscribers"), 5);
+	chatOption->addItem(QTStr("X.Actions.Chat.Disabled"), 1);
+	layout->addWidget(chatOption);
 
 	status = new QLabel(this);
 	status->setWordWrap(true);
 	layout->addWidget(status);
 
 	auto *actions = new QHBoxLayout();
-	createButton = new QPushButton(QTStr("X.Actions.CreateGoLive"), this);
-	auto *selectButton = new QPushButton(QTStr("X.Actions.SelectGoLive"), this);
+	auto *refresh = new QPushButton(QTStr("X.Actions.Refresh"), this);
+	auto *studio = new QPushButton(QTStr("X.Actions.OpenLiveStudio"), this);
+	goLiveButton = new QPushButton(QTStr("X.Actions.GoLive"), this);
 	auto *cancel = new QPushButton(QTStr("Cancel"), this);
-	actions->addWidget(createButton);
-	actions->addWidget(selectButton);
+	actions->addWidget(refresh);
+	actions->addWidget(studio);
 	actions->addStretch(1);
+	actions->addWidget(goLiveButton);
 	actions->addWidget(cancel);
 	layout->addLayout(actions);
 
-	connect(refresh, &QPushButton::clicked, this, &OBSXBroadcastActions::ReloadBroadcasts);
+	connect(refresh, &QPushButton::clicked, this, &OBSXBroadcastActions::ReloadSource);
 	connect(studio, &QPushButton::clicked, this, []() { QDesktopServices::openUrl(QUrl(LiveStudioUrl)); });
-	connect(showKey, &QPushButton::clicked, this, [this, showKey]() {
-		const bool hidden = streamKey->echoMode() == QLineEdit::Password;
-		streamKey->setEchoMode(hidden ? QLineEdit::Normal : QLineEdit::Password);
-		showKey->setText(hidden ? QTStr("Hide") : QTStr("Show"));
-	});
-	connect(scheduleLater, &QCheckBox::toggled, this, &OBSXBroadcastActions::ScheduleToggled);
-	connect(createButton, &QPushButton::clicked, this, &OBSXBroadcastActions::CreateBroadcast);
-	connect(selectButton, &QPushButton::clicked, this, &OBSXBroadcastActions::UseSelected);
+	connect(goLiveButton, &QPushButton::clicked, this, &OBSXBroadcastActions::GoLive);
 	connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
 }
 
-void OBSXBroadcastActions::ScheduleToggled(bool checked)
+void OBSXBroadcastActions::ReloadSource()
 {
-	whenEdit->setEnabled(checked);
-	createButton->setText(checked ? QTStr("X.Actions.Schedule") : QTStr("X.Actions.CreateGoLive"));
-}
-
-const XBroadcast *OBSXBroadcastActions::FindBroadcast(const QString &id) const
-{
-	for (const XBroadcast &item : broadcasts) {
-		if (item.id == id) {
-			return &item;
-		}
-	}
-	return nullptr;
-}
-
-QString OBSXBroadcastActions::ChosenKey() const
-{
-	return streamKey->text().trimmed();
-}
-
-void OBSXBroadcastActions::ReloadBroadcasts()
-{
-	QVector<XBroadcast> loaded;
 	bool ok = false;
 	QString error;
 	auto work = [&]() {
-		ok = api->ListBroadcasts(loaded);
+		ok = api->EnsureSource();
 		if (!ok) {
 			error = api->LastError();
 		}
 	};
 	ExecThreadedWithoutBlocking(work, QTStr("Auth.LoadingChannel.Title"),
 				    QTStr("Auth.LoadingChannel.Text").arg(QStringLiteral("X")));
-
-	broadcasts = loaded;
-	list->clear();
-	for (const XBroadcast &item : broadcasts) {
-		QString label = item.title.isEmpty() ? item.id : item.title;
-		if (!item.state.isEmpty()) {
-			label += QStringLiteral(" - ") + item.state;
-		}
-		if (item.sourceId.isEmpty()) {
-			label += QStringLiteral(" - ") + QTStr("X.Actions.NoKey");
-		}
-		auto *row = new QListWidgetItem(label, list);
-		row->setData(Qt::UserRole, item.id);
-	}
-
 	if (!ok) {
+		sourceLabel->setText(QTStr("X.Actions.SourceMissing"));
 		status->setText(error);
-	} else if (broadcasts.isEmpty()) {
-		status->setText(QTStr("X.Actions.None"));
-	} else {
-		status->clear();
+		goLiveButton->setEnabled(false);
+		return;
 	}
 
-	if (streamKey->text().isEmpty()) {
-		for (const XBroadcast &item : broadcasts) {
-			if (!item.sourceId.isEmpty()) {
-				streamKey->setText(item.sourceId);
-				break;
-			}
-		}
-	}
+	goLiveButton->setEnabled(true);
+	status->clear();
+	sourceLabel->setText(QTStr("X.Actions.SourceReady")
+				     .arg(api->Region(), api->IngestUrl(), QString::fromStdString(api->key())));
+	api->ApplyIngestToService();
 }
 
-void OBSXBroadcastActions::CreateBroadcast()
+void OBSXBroadcastActions::GoLive()
 {
-	const QString key = ChosenKey();
-	if (key.isEmpty()) {
-		ShowError(this, QTStr("X.Actions.Error.NeedKey"));
+	if (api->IngestUrl().isEmpty() || api->key().empty()) {
+		ShowError(this, QTStr("X.Actions.Error.NeedSource"));
 		return;
 	}
 
@@ -220,72 +138,8 @@ void OBSXBroadcastActions::CreateBroadcast()
 	if (title.isEmpty()) {
 		title = QStringLiteral("OBS Studio");
 	}
-	const bool later = scheduleLater->isChecked();
-	const qint64 start = later ? whenEdit->dateTime().toMSecsSinceEpoch() : QDateTime::currentMSecsSinceEpoch();
-	const int hours = duration->currentData().toInt();
-	const qint64 end = start + static_cast<qint64>(hours) * 3600 * 1000;
-
-	XBroadcast created;
-	bool ok = false;
-	QString error;
-	auto work = [&]() {
-		ok = api->CreateScheduled(title, descriptionEdit->toPlainText().trimmed(), key, start, end, created);
-		if (!ok) {
-			error = api->LastError();
-		}
-	};
-	ExecThreadedWithoutBlocking(work, QTStr("Auth.Authing.Title"), QTStr("Auth.Authing.Text").arg(QStringLiteral("X")));
-	if (!ok) {
-		ShowError(this, error.isEmpty() ? QTStr("X.Actions.Error.Api").arg(QStringLiteral("create")) : error);
-		return;
-	}
-
-	if (later) {
-		api->SetStreamKey(key);
-		obs_service_t *service = OBSBasic::Get()->GetService();
-		OBSDataAutoRelease settings = obs_service_get_settings(service);
-		obs_data_set_string(settings, "key", QT_TO_UTF8(key));
-		obs_data_set_string(settings, "broadcast_id", QT_TO_UTF8(created.id));
-		obs_service_update(service, settings);
-		QMessageBox::information(this, QTStr("X.Actions.WindowTitle"), QTStr("X.Actions.Scheduled"));
-		accept();
-		return;
-	}
-
-	api->SetPendingGoLive(created.id);
-	api->SetStreamKey(key);
-	emit ready(created.id.toStdString(), key.toStdString());
-	accept();
-}
-
-void OBSXBroadcastActions::UseSelected()
-{
-	QListWidgetItem *row = list->currentItem();
-	if (!row) {
-		ShowError(this, QTStr("X.Actions.Error.NeedSelection"));
-		return;
-	}
-	const XBroadcast *broadcast = FindBroadcast(row->data(Qt::UserRole).toString());
-	if (!broadcast) {
-		ShowError(this, QTStr("X.Actions.Error.NeedSelection"));
-		return;
-	}
-
-	QString key = broadcast->sourceId;
-	if (key.isEmpty()) {
-		key = ChosenKey();
-	}
-	if (key.isEmpty()) {
-		ShowError(this, QTStr("X.Actions.Error.NeedKey"));
-		return;
-	}
-
-	if (broadcast->scheduled && broadcast->manualPublish && !XBroadcastIsLive(broadcast->state)) {
-		api->SetPendingGoLive(broadcast->id);
-	} else {
-		api->SetPendingGoLive({});
-	}
-	api->SetStreamKey(key);
-	emit ready(broadcast->id.toStdString(), key.toStdString());
+	api->SetPendingPublish(title, lowLatency->isChecked(), chatOption->currentData().toInt(), noTweet->isChecked());
+	api->ApplyIngestToService();
+	emit ready();
 	accept();
 }

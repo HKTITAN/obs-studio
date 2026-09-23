@@ -6,40 +6,30 @@
 
 class QCheckBox;
 class QComboBox;
-class QDateTimeEdit;
 class QLabel;
 class QLineEdit;
-class QListWidget;
-class QPlainTextEdit;
 class QPushButton;
 
 class OBSXBroadcastActions : public QDialog {
 	Q_OBJECT
 
 	XApiWrappers *api = nullptr;
-	QVector<XBroadcast> broadcasts;
 	bool valid = false;
 
 	QLineEdit *titleEdit = nullptr;
-	QPlainTextEdit *descriptionEdit = nullptr;
-	QListWidget *list = nullptr;
-	QLineEdit *streamKey = nullptr;
+	QLabel *sourceLabel = nullptr;
 	QLabel *status = nullptr;
-	QCheckBox *scheduleLater = nullptr;
-	QDateTimeEdit *whenEdit = nullptr;
-	QComboBox *duration = nullptr;
-	QPushButton *createButton = nullptr;
+	QCheckBox *lowLatency = nullptr;
+	QCheckBox *noTweet = nullptr;
+	QComboBox *chatOption = nullptr;
+	QPushButton *goLiveButton = nullptr;
 
 	void BuildUi();
-	void ReloadBroadcasts();
-	void CreateBroadcast();
-	void UseSelected();
-	void ScheduleToggled(bool checked);
-	const XBroadcast *FindBroadcast(const QString &id) const;
-	QString ChosenKey() const;
+	void ReloadSource();
+	void GoLive();
 
 signals:
-	void ready(const std::string &broadcastId, const std::string &sourceId);
+	void ready();
 
 public:
 	explicit OBSXBroadcastActions(QWidget *parent, Auth *auth);
