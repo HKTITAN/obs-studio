@@ -150,7 +150,7 @@ bool XAuth::ExchangeCode(const QString &code, const QString &redirectUri, const 
 	long status = 0;
 	const std::string authorization = BasicAuthorization(clientId, secret).toStdString();
 	const bool success = GetRemoteFile(X_TOKEN_URL, output, error, &status, "application/x-www-form-urlencoded",
-					    "POST", body.constData(), {authorization}, nullptr, 15, false);
+					   "POST", body.constData(), {authorization}, nullptr, 15, false);
 
 	if (!success || output.empty()) {
 		blog(LOG_WARNING, "X token exchange failed: %s", error.c_str());
@@ -209,7 +209,7 @@ bool XAuth::RefreshToken()
 	long status = 0;
 	const std::string authorization = BasicAuthorization(clientId, secret).toStdString();
 	const bool success = GetRemoteFile(X_TOKEN_URL, output, error, &status, "application/x-www-form-urlencoded",
-					    "POST", body.constData(), {authorization}, nullptr, 15, false);
+					   "POST", body.constData(), {authorization}, nullptr, 15, false);
 	if (!success || output.empty()) {
 		blog(LOG_WARNING, "X token refresh failed: %s", error.c_str());
 		return false;
@@ -298,9 +298,8 @@ std::shared_ptr<Auth> XAuth::Login(QWidget *owner, const std::string &)
 	connect(&server, &AuthListener::fail, &dlg, [&dlg]() { dlg.reject(); });
 
 	const QString openUrl = url.toString(QUrl::FullyEncoded);
-	QScopedPointer<QThread> thread(CreateQThread([openUrl]() {
-		QDesktopServices::openUrl(QUrl(openUrl, QUrl::StrictMode));
-	}));
+	QScopedPointer<QThread> thread(
+		CreateQThread([openUrl]() { QDesktopServices::openUrl(QUrl(openUrl, QUrl::StrictMode)); }));
 	thread->start();
 
 #if defined(__APPLE__) && QT_VERSION >= QT_VERSION_CHECK(6, 5, 0) && QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
@@ -317,7 +316,9 @@ std::shared_ptr<Auth> XAuth::Login(QWidget *owner, const std::string &)
 	}
 
 	bool exchanged = false;
-	auto exchange = [&]() { exchanged = auth->ExchangeCode(authCode, redirectUri, verifier); };
+	auto exchange = [&]() {
+		exchanged = auth->ExchangeCode(authCode, redirectUri, verifier);
+	};
 	ExecThreadedWithoutBlocking(exchange, QTStr("Auth.Authing.Title"), QTStr("Auth.Authing.Text").arg("X"));
 	if (!exchanged) {
 		QMessageBox::warning(owner, QTStr("Auth.AuthFailure.Title"),
@@ -328,7 +329,8 @@ std::shared_ptr<Auth> XAuth::Login(QWidget *owner, const std::string &)
 	auto finish = [&]() {
 		auth->FetchIdentity();
 	};
-	ExecThreadedWithoutBlocking(finish, QTStr("Auth.LoadingChannel.Title"), QTStr("Auth.LoadingChannel.Text").arg("X"));
+	ExecThreadedWithoutBlocking(finish, QTStr("Auth.LoadingChannel.Title"),
+				    QTStr("Auth.LoadingChannel.Text").arg("X"));
 
 	config_t *config = OBSBasic::Get()->Config();
 	config_set_string(config, "X", "Username", QT_TO_UTF8(auth->Username()));

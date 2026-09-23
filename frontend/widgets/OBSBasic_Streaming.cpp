@@ -279,7 +279,8 @@ void OBSBasic::StreamingStart()
 					detail = xAuth->LastError();
 				}
 			};
-			ExecThreadedWithoutBlocking(publish, QTStr("X.Actions.GoLive.Title"), QTStr("X.Actions.GoLive.Text"));
+			ExecThreadedWithoutBlocking(publish, QTStr("X.Actions.GoLive.Title"),
+						    QTStr("X.Actions.GoLive.Text"));
 			if (!published) {
 				if (detail.isEmpty()) {
 					detail = QTStr("X.Actions.Error.Api").arg(QStringLiteral("go live"));
@@ -289,7 +290,8 @@ void OBSBasic::StreamingStart()
 				if (XStopOutputAfterPublishFailure(published)) {
 					blog(LOG_WARNING,
 					     "X publish failed. Stopping RTMP so OBS does not keep pushing without a live broadcast.");
-					QMetaObject::invokeMethod(this, &OBSBasic::ForceStopStreaming, Qt::QueuedConnection);
+					QMetaObject::invokeMethod(this, &OBSBasic::ForceStopStreaming,
+								  Qt::QueuedConnection);
 				}
 			}
 		}
@@ -480,8 +482,7 @@ void OBSBasic::StreamActionTriggered()
 			const XStartKeyAction keyAction = XPlanStartKey(serviceHasKey, authHasKey);
 			if (keyAction == XStartKeyAction::ApplyThenRecheck && xAuth) {
 				xAuth->ApplyIngestToService();
-				streamKey =
-					obs_service_get_connect_info(service, OBS_SERVICE_CONNECT_INFO_STREAM_KEY);
+				streamKey = obs_service_get_connect_info(service, OBS_SERVICE_CONNECT_INFO_STREAM_KEY);
 				serviceHasKey = streamKey && *streamKey;
 			}
 			if (XStartBlockedAfterApply(keyAction, serviceHasKey)) {

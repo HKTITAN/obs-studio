@@ -122,8 +122,8 @@ void OBSXBroadcastActions::ReloadSource()
 
 	goLiveButton->setEnabled(true);
 	status->clear();
-	sourceLabel->setText(QTStr("X.Actions.SourceReady")
-				     .arg(api->Region(), api->IngestUrl(), QString::fromStdString(api->key())));
+	sourceLabel->setText(
+		QTStr("X.Actions.SourceReady").arg(api->Region(), api->IngestUrl(), QString::fromStdString(api->key())));
 	api->ApplyIngestToService();
 }
 

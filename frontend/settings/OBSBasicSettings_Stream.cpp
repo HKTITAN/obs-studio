@@ -512,8 +512,9 @@ void OBSBasicSettings::ApplyXIngestToForm(const QString &ingest, const QString &
 	if (!ingest.isEmpty()) {
 		int index = ui->server->findData(ingest);
 		if (index < 0) {
-			const QString label = ingest.startsWith(QStringLiteral("rtmps://")) ? ingest
-											    : ingest + QStringLiteral(" (RTMP)");
+			const QString label = ingest.startsWith(QStringLiteral("rtmps://"))
+						      ? ingest
+						      : ingest + QStringLiteral(" (RTMP)");
 			ui->server->insertItem(0, label, ingest);
 			index = 0;
 		}

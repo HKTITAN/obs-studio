@@ -95,7 +95,8 @@ UrlView ParseUrl(const std::string &url)
 	const int defaultPort = (proto == "https" || proto == "HTTPS") ? 443 : 80;
 	const size_t hostStart = scheme + 3;
 	const size_t path = url.find('/', hostStart);
-	std::string hostport = path == std::string::npos ? url.substr(hostStart) : url.substr(hostStart, path - hostStart);
+	std::string hostport = path == std::string::npos ? url.substr(hostStart)
+							 : url.substr(hostStart, path - hostStart);
 	const size_t at = hostport.rfind('@');
 	if (at != std::string::npos) {
 		hostport = hostport.substr(at + 1);

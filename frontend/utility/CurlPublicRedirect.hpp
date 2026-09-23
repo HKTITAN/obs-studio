@@ -16,5 +16,4 @@ struct ObsPublicGetResult {
 	bool droppedAuthorization = false;
 };
 
-ObsPublicGetResult obs_curl_get_follow_public(const char *url, const std::vector<std::string> &headers,
-					       int timeoutSec);
+ObsPublicGetResult obs_curl_get_follow_public(const char *url, const std::vector<std::string> &headers, int timeoutSec);

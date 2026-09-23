@@ -252,34 +252,32 @@ void TestGoLiveAndEnd()
 	int creates = 0;
 	int publishes = 0;
 	QString id;
-	const XGoLiveResult inactive = XRunGoLive(
-		[]() { return false; },
-		[&](QString &) {
-			creates++;
-			return true;
-		},
-		[&](const QString &) {
-			publishes++;
-			return true;
-		},
-		id);
+	const XGoLiveResult inactive = XRunGoLive([]() { return false; },
+						  [&](QString &) {
+							  creates++;
+							  return true;
+						  },
+						  [&](const QString &) {
+							  publishes++;
+							  return true;
+						  },
+						  id);
 	CHECK(inactive == XGoLiveResult::FailedBeforeCreate);
 	CHECK(creates == 0);
 	CHECK(publishes == 0);
 	CHECK(!XShouldEndBroadcast(false, false));
 
-	const XGoLiveResult publishFailed = XRunGoLive(
-		[]() { return true; },
-		[&](QString &created) {
-			creates++;
-			created = "broadcast";
-			return true;
-		},
-		[&](const QString &) {
-			publishes++;
-			return false;
-		},
-		id);
+	const XGoLiveResult publishFailed = XRunGoLive([]() { return true; },
+						       [&](QString &created) {
+							       creates++;
+							       created = "broadcast";
+							       return true;
+						       },
+						       [&](const QString &) {
+							       publishes++;
+							       return false;
+						       },
+						       id);
 	CHECK(publishFailed == XGoLiveResult::FailedPublish);
 	CHECK(creates == 1);
 	CHECK(publishes == 1);
@@ -288,14 +286,12 @@ void TestGoLiveAndEnd()
 	CHECK(XStopOutputAfterPublishFailure(false));
 	CHECK(!XStopOutputAfterPublishFailure(true));
 
-	const XGoLiveResult published = XRunGoLive(
-		[]() { return true; },
-		[&](QString &created) {
-			created = "live";
-			return true;
-		},
-		[&](const QString &) { return true; },
-		id);
+	const XGoLiveResult published = XRunGoLive([]() { return true; },
+						   [&](QString &created) {
+							   created = "live";
+							   return true;
+						   },
+						   [&](const QString &) { return true; }, id);
 	CHECK(published == XGoLiveResult::Published);
 	CHECK(XShouldEndBroadcast(true, true));
 	CHECK(!XShouldEndBroadcast(true, false));

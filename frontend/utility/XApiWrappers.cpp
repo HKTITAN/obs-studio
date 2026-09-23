@@ -359,25 +359,24 @@ bool XApiWrappers::PublishPendingBroadcast()
 	}
 	SetStatus(QTStr("X.Settings.Status.Waiting"));
 	QString created;
-	const XGoLiveResult result = XRunGoLive(
-		[&]() { return WaitUntilStreamActive(); },
-		[&](QString &id) {
-			if (!CreateBroadcast(id)) {
-				return false;
-			}
-			broadcastId = id;
-			return true;
-		},
-		[&](const QString &id) {
-			QString title = pendingTitle.trimmed();
-			if (title.isEmpty()) {
-				title = QStringLiteral("OBS Studio");
-			}
-			const std::string body =
-				XPublishStateBody(title.toStdString(), pendingNoTweet, pendingChatOption);
-			return SetBroadcastState(id, body.c_str());
-		},
-		created);
+	const XGoLiveResult result = XRunGoLive([&]() { return WaitUntilStreamActive(); },
+						[&](QString &id) {
+							if (!CreateBroadcast(id)) {
+								return false;
+							}
+							broadcastId = id;
+							return true;
+						},
+						[&](const QString &id) {
+							QString title = pendingTitle.trimmed();
+							if (title.isEmpty()) {
+								title = QStringLiteral("OBS Studio");
+							}
+							const std::string body = XPublishStateBody(
+								title.toStdString(), pendingNoTweet, pendingChatOption);
+							return SetBroadcastState(id, body.c_str());
+						},
+						created);
 	switch (result) {
 	case XGoLiveResult::FailedBeforeCreate:
 	case XGoLiveResult::FailedCreate:
