@@ -7,6 +7,9 @@
 #ifdef YOUTUBE_ENABLED
 #include <utility/YoutubeApiWrappers.hpp>
 #endif
+#ifdef X_ENABLED
+#include <utility/XApiWrappers.hpp>
+#endif
 #include <widgets/OBSBasic.hpp>
 
 #include <qt-wrappers.hpp>
@@ -673,7 +676,7 @@ void OBSBasicSettings::ServiceChanged(bool resetFields)
 	}
 
 	auto system_auth_service = main->auth->service();
-	bool service_check = service.find(system_auth_service) != std::string::npos;
+	bool service_check = Auth::ServiceMatches(service, system_auth_service);
 #ifdef YOUTUBE_ENABLED
 	service_check = service_check ? service_check
 				      : IsYouTubeService(system_auth_service) && IsYouTubeService(service);
@@ -843,6 +846,18 @@ void OBSBasicSettings::OnOAuthStreamKeyConnected()
 			ui->connectedAccountText->setText(QTStr("Auth.LoadingChannel.Title"));
 
 			get_yt_ch_title(ui.get());
+		}
+#endif
+#ifdef X_ENABLED
+		if (IsXService(a->service())) {
+			ui->connectedAccountLabel->setVisible(true);
+			ui->connectedAccountText->setVisible(true);
+			auto *xAuth = dynamic_cast<XApiWrappers *>(a);
+			if (xAuth && !xAuth->Username().isEmpty()) {
+				ui->connectedAccountText->setText(QTStr("X.Auth.Connected").arg(xAuth->Username()));
+			} else {
+				ui->connectedAccountText->setText(QTStr("X.Auth.SignedIn"));
+			}
 		}
 #endif
 	}
@@ -1116,6 +1131,20 @@ void OBSBasicSettings::UpdateServiceRecommendations()
 			"Google Privacy Policy</a><br>"
 			"<a href=\"https://security.google.com/settings/security/permissions\">"
 			"Google Third-Party Permissions</a>";
+	}
+#endif
+#ifdef X_ENABLED
+	if (IsXService(ui->service->currentText().toStdString())) {
+		if (!text.isEmpty()) {
+			text += "<br><br>";
+		}
+
+		text += "<a href=\"https://developer.x.com/en/developer-terms/agreement-and-policy.html\">"
+			"X Developer Terms</a><br>"
+			"<a href=\"https://x.com/en/privacy\">"
+			"X Privacy Policy</a><br>"
+			"<a href=\"https://x.com/settings/connected_apps\">"
+			"X Connected Apps</a>";
 	}
 #endif
 	ui->enforceSettingsLabel->setText(text);

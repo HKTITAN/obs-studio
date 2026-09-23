@@ -24,6 +24,10 @@
 #include <docks/YouTubeAppDock.hpp>
 #include <utility/YoutubeApiWrappers.hpp>
 #endif
+#ifdef X_ENABLED
+#include <dialogs/OBSXBroadcastActions.hpp>
+#include <utility/XApiWrappers.hpp>
+#endif
 
 #include <qt-wrappers.hpp>
 
@@ -198,13 +202,44 @@ void OBSBasic::SetBroadcastFlowEnabled(bool enabled)
 	emit BroadcastFlowEnabled(enabled);
 }
 
+#ifdef X_ENABLED
+void OBSBasic::XBroadcastDialogOk(const std::string &broadcastId, const std::string &sourceId)
+{
+	obs_service_t *service_obj = GetService();
+	OBSDataAutoRelease settings = obs_service_get_settings(service_obj);
+	obs_data_set_string(settings, "key", sourceId.c_str());
+	obs_data_set_string(settings, "broadcast_id", broadcastId.c_str());
+	obs_service_update(service_obj, settings);
+
+	autoStartBroadcast = true;
+	autoStopBroadcast = true;
+	broadcastReady = true;
+	emit BroadcastStreamReady(broadcastReady);
+	QMetaObject::invokeMethod(this, &OBSBasic::StartStreaming);
+}
+#endif
+
 void OBSBasic::SetupBroadcast()
 {
-#ifdef YOUTUBE_ENABLED
 	Auth *const auth = GetAuth();
+	if (!auth) {
+		return;
+	}
+#ifdef YOUTUBE_ENABLED
 	if (IsYouTubeService(auth->service())) {
 		OBSYoutubeActions dialog(this, auth, broadcastReady);
 		connect(&dialog, &OBSYoutubeActions::ok, this, &OBSBasic::YouTubeActionDialogOk);
+		dialog.exec();
+		return;
+	}
+#endif
+#ifdef X_ENABLED
+	if (IsXService(auth->service())) {
+		OBSXBroadcastActions dialog(this, auth);
+		if (!dialog.Valid()) {
+			return;
+		}
+		connect(&dialog, &OBSXBroadcastActions::ready, this, &OBSBasic::XBroadcastDialogOk);
 		dialog.exec();
 	}
 #endif

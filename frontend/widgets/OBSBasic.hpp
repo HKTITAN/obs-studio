@@ -1682,6 +1682,9 @@ private:
 	void YouTubeActionDialogOk(const std::string &broadcastId, const std::string &streamId, const std::string &key,
 				   bool autostart, bool autostop, bool startNow);
 #endif
+#ifdef X_ENABLED
+	void XBroadcastDialogOk(const std::string &broadcastId, const std::string &sourceId);
+#endif
 
 	void BroadcastButtonClicked();
 	void SetBroadcastFlowEnabled(bool enabled);

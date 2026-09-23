@@ -24,6 +24,9 @@
 #include <docks/YouTubeAppDock.hpp>
 #include <utility/YoutubeApiWrappers.hpp>
 #endif
+#ifdef X_ENABLED
+#include <utility/XApiWrappers.hpp>
+#endif
 
 #include <qt-wrappers.hpp>
 
@@ -260,6 +263,30 @@ void OBSBasic::StreamingStart()
 			youtubeStreamCheckThread = CreateQThread([this, key] { YoutubeStreamCheck(key); });
 			youtubeStreamCheckThread->setObjectName("YouTubeStreamCheckThread");
 			youtubeStreamCheckThread->start();
+		}
+	}
+#endif
+
+#ifdef X_ENABLED
+	if (auth && IsXService(auth->service())) {
+		auto *xAuth = dynamic_cast<XApiWrappers *>(auth.get());
+		if (xAuth && xAuth->HasPendingGoLive()) {
+			bool published = false;
+			QString detail;
+			auto publish = [&]() {
+				published = xAuth->PublishPendingBroadcast();
+				if (!published) {
+					detail = xAuth->LastError();
+				}
+			};
+			ExecThreadedWithoutBlocking(publish, QTStr("X.Actions.GoLive.Title"), QTStr("X.Actions.GoLive.Text"));
+			if (!published) {
+				if (detail.isEmpty()) {
+					detail = QTStr("X.Actions.Error.Api").arg(QStringLiteral("go live"));
+				}
+				OBSMessageBox::warning(this, QTStr("Output.BroadcastStartFailed"),
+						       QTStr("X.Actions.GoLiveFailed").arg(detail), true);
+			}
 		}
 	}
 #endif
