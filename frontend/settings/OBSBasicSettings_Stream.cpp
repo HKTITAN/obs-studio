@@ -234,6 +234,11 @@ void OBSBasicSettings::LoadStream1Settings()
 	ServiceChanged(true);
 
 	UpdateKeyLink();
+#ifdef X_ENABLED
+	// setCurrentIndex does not emit when the service is already selected, so
+	// the X controls have to be refreshed after the server list is final.
+	UpdateXStreamControls();
+#endif
 	UpdateMoreInfoLink();
 	UpdateVodTrackSetting();
 	UpdateServiceRecommendations();
@@ -487,6 +492,7 @@ void OBSBasicSettings::EnsureXStreamControls()
 	}
 
 	xGetStreamKeyButton = new QPushButton(QTStr("X.Settings.GetStreamKey"), ui->streamKeyWidget);
+	xGetStreamKeyButton->setToolTip(QTStr("X.Settings.GetStreamKey.Tip"));
 	auto *row = qobject_cast<QHBoxLayout *>(ui->streamKeyWidget->layout());
 	if (row) {
 		const int index = row->indexOf(ui->getStreamKeyButton);

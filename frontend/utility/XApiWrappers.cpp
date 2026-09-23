@@ -61,65 +61,6 @@ QString ErrorText(const Json &json)
 	return {};
 }
 
-XStreamSource ParseSource(const Json &item)
-{
-	XStreamSource source;
-	const Json object = item["source"].is_object() ? item["source"] : item;
-	source.id = JsonAsString(object["id"]);
-	if (source.id.isEmpty()) {
-		source.id = JsonAsString(object["rtmp_stream_key"]);
-	}
-	source.name = JsonAsString(object["name"]);
-	source.region = JsonAsString(object["rtmp_region"]);
-	source.rtmpUrl = JsonAsString(object["rtmp_url"]);
-	source.rtmpsUrl = JsonAsString(object["rtmps_url"]);
-	source.streamKey = JsonAsString(object["rtmp_stream_key"]);
-	if (source.streamKey.isEmpty()) {
-		source.streamKey = source.id;
-	}
-	source.streamActive = object["is_stream_active"].bool_value();
-	return source;
-}
-
-void CollectSources(const Json &json, QVector<XStreamSource> &out)
-{
-	if (json.is_array()) {
-		for (const Json &item : json.array_items()) {
-			XStreamSource source = ParseSource(item);
-			if (!source.id.isEmpty()) {
-				out.push_back(source);
-			}
-		}
-		return;
-	}
-	if (json["source"].is_object()) {
-		XStreamSource source = ParseSource(json);
-		if (!source.id.isEmpty()) {
-			out.push_back(source);
-		}
-	}
-	const char *keys[] = {"sources", "data"};
-	for (const char *key : keys) {
-		if (!json[key].is_array()) {
-			continue;
-		}
-		for (const Json &item : json[key].array_items()) {
-			XStreamSource source = ParseSource(item);
-			if (!source.id.isEmpty()) {
-				out.push_back(source);
-			}
-		}
-	}
-}
-
-QString PreferredIngest(const XStreamSource &source)
-{
-	if (!source.rtmpsUrl.isEmpty()) {
-		return source.rtmpsUrl;
-	}
-	return source.rtmpUrl;
-}
-
 } // namespace
 
 XApiWrappers::XApiWrappers(const Def &d) : XAuth(d) {}
@@ -171,7 +112,7 @@ bool XApiWrappers::Request(const QString &url, const char *method, const char *b
 		if (message.isEmpty()) {
 			message = error.empty() ? QString::number(status) : QString::fromStdString(error);
 		}
-		if (status == 401 || status == 403) {
+		if (XIsAccessDenied(status)) {
 			lastError = QTStr("X.Settings.AccessDenied").arg(message.toHtmlEscaped());
 		} else {
 			lastError = QTStr("X.Actions.Error.Api").arg(message.toHtmlEscaped());
@@ -236,10 +177,7 @@ bool XApiWrappers::ListSources(QVector<XStreamSource> &out)
 	if (!Request(url, "GET", nullptr, json, true, nullptr, false)) {
 		return false;
 	}
-	CollectSources(json, out);
-	if (out.isEmpty() && json["data"].is_object()) {
-		CollectSources(json["data"], out);
-	}
+	XCollectSourceResponse(json, out);
 	return true;
 }
 
@@ -253,7 +191,7 @@ bool XApiWrappers::GetSource(const QString &id, XStreamSource &out)
 	if (!Request(url, "GET", nullptr, json, true, nullptr, false)) {
 		return false;
 	}
-	out = ParseSource(json);
+	out = XParseSource(json);
 	if (out.id.isEmpty()) {
 		lastError = QTStr("X.Actions.Error.Api").arg(QStringLiteral("missing source"));
 		return false;
@@ -273,8 +211,8 @@ bool XApiWrappers::CreateSource(const QString &name, const QString &regionName, 
 	if (!Request(url, "POST", body.c_str(), json, true, nullptr, false)) {
 		return false;
 	}
-	created = ParseSource(json);
-	if (created.streamKey.isEmpty() || PreferredIngest(created).isEmpty()) {
+	created = XParseSource(json);
+	if (created.streamKey.isEmpty() || XPreferredIngest(created).isEmpty()) {
 		lastError = QTStr("X.Actions.Error.Api").arg(QStringLiteral("source missing ingest"));
 		return false;
 	}
@@ -287,7 +225,7 @@ void XApiWrappers::RememberSource(const XStreamSource &source)
 	if (!source.region.isEmpty()) {
 		region = source.region;
 	}
-	ingestUrl = PreferredIngest(source);
+	ingestUrl = XPreferredIngest(source);
 	if (!source.streamKey.isEmpty()) {
 		key_ = source.streamKey.toStdString();
 	}
@@ -299,45 +237,29 @@ bool XApiWrappers::EnsureSource()
 		return false;
 	}
 
+	XStreamSource chosen;
 	QString recommended;
-	if (!RecommendedRegion(recommended)) {
+	const XEnsureResult result = XRunEnsureSource(
+		sourceId, [&](QString &out) { return RecommendedRegion(out); },
+		[&](const QString &id, XStreamSource &out) { return GetSource(id, out); },
+		[&](QVector<XStreamSource> &out) { return ListSources(out); },
+		[&](const QString &regionName, XStreamSource &created) {
+			return CreateSource(QStringLiteral("OBS Studio"), regionName, created);
+		},
+		chosen, recommended);
+	switch (result) {
+	case XEnsureResult::Failed:
 		return false;
+	case XEnsureResult::ReusedSaved:
+	case XEnsureResult::ReusedListed:
+	case XEnsureResult::Created:
+		region = recommended;
+		RememberSource(chosen);
+		ApplyIngestToService();
+		Persist();
+		return true;
 	}
-	region = recommended;
-
-	if (!sourceId.isEmpty()) {
-		XStreamSource existing;
-		if (GetSource(sourceId, existing) && existing.region == region && !PreferredIngest(existing).isEmpty()) {
-			RememberSource(existing);
-			ApplyIngestToService();
-			Persist();
-			return true;
-		}
-	}
-
-	QVector<XStreamSource> sources;
-	if (ListSources(sources)) {
-		for (const XStreamSource &source : sources) {
-			if (source.region == region && !PreferredIngest(source).isEmpty()) {
-				RememberSource(source);
-				ApplyIngestToService();
-				Persist();
-				return true;
-			}
-		}
-	}
-
-	XStreamSource created;
-	if (!CreateSource(QStringLiteral("OBS Studio"), region, created)) {
-		return false;
-	}
-	if (created.region.isEmpty()) {
-		created.region = region;
-	}
-	RememberSource(created);
-	ApplyIngestToService();
-	Persist();
-	return true;
+	return false;
 }
 
 void XApiWrappers::ApplyIngestToService()
@@ -436,43 +358,59 @@ bool XApiWrappers::PublishPendingBroadcast()
 		return true;
 	}
 	SetStatus(QTStr("X.Settings.Status.Waiting"));
-	if (!WaitUntilStreamActive()) {
-		SetStatus(lastError);
-		return false;
-	}
 	QString created;
-	if (!CreateBroadcast(created)) {
+	const XGoLiveResult result = XRunGoLive(
+		[&]() { return WaitUntilStreamActive(); },
+		[&](QString &id) {
+			if (!CreateBroadcast(id)) {
+				return false;
+			}
+			broadcastId = id;
+			return true;
+		},
+		[&](const QString &id) {
+			QString title = pendingTitle.trimmed();
+			if (title.isEmpty()) {
+				title = QStringLiteral("OBS Studio");
+			}
+			const std::string body =
+				XPublishStateBody(title.toStdString(), pendingNoTweet, pendingChatOption);
+			return SetBroadcastState(id, body.c_str());
+		},
+		created);
+	switch (result) {
+	case XGoLiveResult::FailedBeforeCreate:
+	case XGoLiveResult::FailedCreate:
+		pendingPublish = false;
 		SetStatus(lastError);
 		return false;
-	}
-	broadcastId = created;
-	QString title = pendingTitle.trimmed();
-	if (title.isEmpty()) {
-		title = QStringLiteral("OBS Studio");
-	}
-	const Json::object payload = {
-		{"state", "PUBLISH"},
-		{"title", title.toStdString()},
-		{"should_not_tweet", pendingNoTweet},
-		{"chat_option", pendingChatOption},
-	};
-	const std::string body = Json(payload).dump();
-	if (!SetBroadcastState(broadcastId, body.c_str())) {
+	case XGoLiveResult::FailedPublish:
+		// The broadcast exists as NOT_STARTED. END is only RUNNING -> ENDED,
+		// and any extra field is rejected. Leave it for the platform timeout.
+		pendingPublish = false;
+		broadcastPublished = false;
+		blog(LOG_INFO,
+		     "X broadcast '%s' was created but not published. Leaving it NOT_STARTED for platform timeout.",
+		     QT_TO_UTF8(broadcastId));
 		SetStatus(lastError);
 		return false;
+	case XGoLiveResult::Published:
+		pendingPublish = false;
+		broadcastPublished = true;
+		SetStatus(QTStr("X.Settings.Status.Live"));
+		return true;
 	}
-	pendingPublish = false;
-	broadcastPublished = true;
-	SetStatus(QTStr("X.Settings.Status.Live"));
-	return true;
+	return false;
 }
 
 bool XApiWrappers::EndPublishedBroadcast()
 {
-	if (!broadcastPublished || broadcastId.isEmpty()) {
+	// Connect failure never publishes. Publish failure keeps broadcastPublished
+	// false, including when a NOT_STARTED broadcast id was stored. Both no-op.
+	if (!XShouldEndBroadcast(broadcastPublished, !broadcastId.isEmpty())) {
 		return true;
 	}
-	if (!SetBroadcastState(broadcastId, "{\"state\":\"END\"}")) {
+	if (!SetBroadcastState(broadcastId, XEndStateBody())) {
 		SetStatus(lastError);
 		return false;
 	}

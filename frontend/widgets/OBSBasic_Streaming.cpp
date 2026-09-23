@@ -286,6 +286,11 @@ void OBSBasic::StreamingStart()
 				}
 				OBSMessageBox::warning(this, QTStr("Output.BroadcastStartFailed"),
 						       QTStr("X.Actions.GoLiveFailed").arg(detail), true);
+				if (XStopOutputAfterPublishFailure(published)) {
+					blog(LOG_WARNING,
+					     "X publish failed. Stopping RTMP so OBS does not keep pushing without a live broadcast.");
+					QMetaObject::invokeMethod(this, &OBSBasic::ForceStopStreaming, Qt::QueuedConnection);
+				}
 			}
 		}
 	}
@@ -468,11 +473,23 @@ void OBSBasic::StreamActionTriggered()
 		const char *serviceName = obs_data_get_string(xSettings, "service");
 		const char *streamKey = obs_service_get_connect_info(service, OBS_SERVICE_CONNECT_INFO_STREAM_KEY);
 #ifdef X_ENABLED
-		if (serviceName && IsXService(serviceName) && !(streamKey && *streamKey)) {
-			OBSMessageBox::warning(this, QTStr("Basic.Settings.Stream.MissingSettingAlert"),
-					       QTStr("X.Settings.NeedKey"));
-			on_action_Settings_triggered();
-			return;
+		if (serviceName && IsXService(serviceName)) {
+			auto *xAuth = dynamic_cast<XApiWrappers *>(auth);
+			const bool authHasKey = xAuth && !xAuth->key().empty();
+			bool serviceHasKey = streamKey && *streamKey;
+			const XStartKeyAction keyAction = XPlanStartKey(serviceHasKey, authHasKey);
+			if (keyAction == XStartKeyAction::ApplyThenRecheck && xAuth) {
+				xAuth->ApplyIngestToService();
+				streamKey =
+					obs_service_get_connect_info(service, OBS_SERVICE_CONNECT_INFO_STREAM_KEY);
+				serviceHasKey = streamKey && *streamKey;
+			}
+			if (XStartBlockedAfterApply(keyAction, serviceHasKey)) {
+				OBSMessageBox::warning(this, QTStr("Basic.Settings.Stream.MissingSettingAlert"),
+						       QTStr("X.Settings.NeedKey"));
+				on_action_Settings_triggered();
+				return;
+			}
 		}
 #else
 		UNUSED_PARAMETER(serviceName);

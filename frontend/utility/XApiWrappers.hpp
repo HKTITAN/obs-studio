@@ -1,20 +1,9 @@
 #pragma once
 
 #include <oauth/XAuth.hpp>
-
-#include <json11.hpp>
+#include <utility/XBroadcastLogic.hpp>
 
 #include <QString>
-
-struct XStreamSource {
-	QString id;
-	QString name;
-	QString region;
-	QString rtmpUrl;
-	QString rtmpsUrl;
-	QString streamKey;
-	bool streamActive = false;
-};
 
 inline bool IsXService(const std::string &service)
 {
